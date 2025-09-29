@@ -7,14 +7,14 @@ c = 3
 d = a + b + c
 
 while True:
-    colums = {
+    columns = {
         "a": a,
         "b": b,
         "c": c,
         "d": d
     }
 
-    db.send(colums)
+    db.send(columns)
 
     a += 1
     b += 2
