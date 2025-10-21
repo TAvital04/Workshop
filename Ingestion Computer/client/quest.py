@@ -3,7 +3,7 @@ from datetime import datetime
 import sine
 
 conf = 'http::addr=localhost:9000;'
-table_name = 'telemetry-data'
+table_name = 'sin-table'
 
 with Sender.from_conf(conf) as sender:
     while True:
