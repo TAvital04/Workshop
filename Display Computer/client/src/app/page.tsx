@@ -7,14 +7,19 @@ interface LatestData {
 }
 
 export default function Home() {
-  // The connection status of the websocket for display purposes.
+  // A reference to the connection status of the websocket for rendering purposes.
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+
+  // A reference to the latest data that will be used for rendering purposes
   const [latestData, setLatestData] = useState<LatestData | null>(null)
 
-  // The most recently connected websocket (if there is one)
+  // A reference to the most recently connected websocket (if there is one)
   const wsRef = useRef<WebSocket | null>(null);
 
+  // A reference to the timeout set for reconnection upon web socket close
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // A reference to the number of data sent to the client from the web socket server
   const telemetryUpdateCounterRef = useRef<number>(0);
 
   // Single WebSocket connection for the entire app
@@ -108,7 +113,7 @@ export default function Home() {
 
   return (
     <>
-      
+
     </>
   )
 }
