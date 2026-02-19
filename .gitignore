@@ -1,1 +1,7 @@
 /"Computer 1"/"questdb - Shortcut.lnk"
+.DS_Store
+Display Computer/.DS_Store
+Ingestion Computer/.DS_Store
+workshop/.DS_Store
+workshop/node_modules/.DS_Store
+workshop/venv/
