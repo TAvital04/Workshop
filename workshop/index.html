@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KXR x IEEE — Live Telemetry Dashboard</title>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0f14;
+      --surface:  #161a23;
+      --border:   #252b38;
+      --accent:   #00e5ff;
+      --green:    #00e676;
+      --red:      #ff1744;
+      --yellow:   #ffd740;
+      --text:     #e0e6f0;
+      --muted:    #6b7693;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo { font-size: 1.1rem; letter-spacing: 0.12em; color: var(--accent); }
+    .logo span { color: var(--muted); }
+
+    #status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      letter-spacing: 0.1em;
+    }
+
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s;
+    }
+    .dot.connected { background: var(--green); animation: pulse 1.4s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Pipeline Banner ── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-bottom: 28px;
+      letter-spacing: 0.08em;
+    }
+    .pipeline .stage {
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .pipeline .stage.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .pipeline .arrow { color: var(--border); }
+
+    /* ── Grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: var(--accent);
+      line-height: 1;
+      margin-bottom: 12px;
+      transition: color 0.2s;
+    }
+
+    .card-value.spike { color: var(--yellow); }
+
+    canvas {
+      width: 100%;
+      height: 80px;
+      display: block;
+    }
+
+    /* ── Log ── */
+    .log-wrap {
+      margin-top: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+    }
+
+    .log-header {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    #log {
+      font-size: 0.75rem;
+      color: var(--muted);
+      height: 90px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column-reverse;
+    }
+
+    #log p { margin: 1px 0; }
+    #log p.info  { color: var(--accent); }
+    #log p.warn  { color: var(--yellow); }
+    #log p.error { color: var(--red); }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="logo">KXR <span>//</span> IEEE &nbsp;·&nbsp; WebSocket Fundamentals</div>
+    <div id="status-badge">
+      <div class="dot" id="dot"></div>
+      <span id="status-text">DISCONNECTED</span>
+    </div>
+  </header>
+
+  <!-- Pipeline stage indicator -->
+  <div class="pipeline">
+    <div class="stage">INGEST</div>
+    <div class="arrow">→</div>
+    <div class="stage">STORAGE</div>
+    <div class="arrow">→</div>
+    <div class="stage">QUERY</div>
+    <div class="arrow">→</div>
+    <div class="stage active">STREAM</div>
+    <div class="arrow">→</div>
+    <div class="stage active">DISPLAY</div>
+  </div>
+
+  <!-- Sensor cards — injected by JS -->
+  <div class="grid" id="grid"></div>
+
+  <!-- Raw packet log -->
+  <div class="log-wrap">
+    <div class="log-header">Raw WebSocket Packets</div>
+    <div id="log"></div>
+  </div>
+
+  <script>
+  // ─────────────────────────────────────────────────────────────────────────
+  // PIPELINE STAGE: [DISPLAY]
+  //
+  // This file is the client counterpart to server.js.
+  // It uses the native browser WebSocket API — no libraries needed.
+  //
+  // Concepts covered:
+  //   1. Opening a WebSocket connection
+  //   2. Handling connection lifecycle events (open, message, close, error)
+  //   3. Parsing JSON messages
+  //   4. Rendering live data
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const WS_URL    = 'ws://localhost:3001';
+  const HISTORY   = 60;       // data points to keep per sensor (= 6 seconds at 10 Hz)
+  const MAX_LOG   = 8;        // max raw packet lines in the log
+
+  // State: one entry per sensor id
+  const sensors = {};         // { [id]: { values: number[], canvas, ctx, valueEl } }
+
+  // ── Logging helper ────────────────────────────────────────────────────────
+  const logEl = document.getElementById('log');
+  function log(msg, type = 'info') {
+    const ts   = new Date().toISOString().slice(11, 23);
+    const p    = document.createElement('p');
+    p.className = type;
+    p.textContent = `[${ts}] ${msg}`;
+    logEl.prepend(p);
+    // trim old entries
+    while (logEl.children.length > MAX_LOG) logEl.removeChild(logEl.lastChild);
+  }
+
+  // ── Card factory ──────────────────────────────────────────────────────────
+  function ensureCard(id) {
+    if (sensors[id]) return;
+
+    const label = id.replace(/_/g, ' ').toUpperCase();
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-label">${label}</div>
+      <div class="card-value" id="val-${id}">—</div>
+      <canvas id="chart-${id}" height="80"></canvas>
+    `;
+    document.getElementById('grid').appendChild(card);
+
+    const canvas = document.getElementById(`chart-${id}`);
+    sensors[id] = {
+      values:  [],
+      canvas,
+      ctx:     canvas.getContext('2d'),
+      valueEl: document.getElementById(`val-${id}`),
+    };
+  }
+
+  // ── Chart renderer (pure canvas, no libraries) ────────────────────────────
+  function drawChart(id) {
+    const { values, canvas, ctx } = sensors[id];
+    const W = canvas.width  = canvas.offsetWidth;
+    const H = canvas.height = 80;
+
+    ctx.clearRect(0, 0, W, H);
+
+    if (values.length < 2) return;
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+
+    // Grid line at midpoint
+    ctx.strokeStyle = '#252b38';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, H / 2);
+    ctx.lineTo(W, H / 2);
+    ctx.stroke();
+
+    // Data line
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+
+    values.forEach((v, i) => {
+      const x = (i / (HISTORY - 1)) * W;
+      const y = H - ((v - min) / range) * (H - 8) - 4;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // ── Status helpers ─────────────────────────────────────────────────────────
+  const dot        = document.getElementById('dot');
+  const statusText = document.getElementById('status-text');
+
+  function setConnected(yes) {
+    dot.className    = yes ? 'dot connected' : 'dot';
+    statusText.textContent = yes ? 'CONNECTED' : 'DISCONNECTED';
+  }
+
+  // ── WebSocket connection ──────────────────────────────────────────────────
+  //
+  // This is the core of the workshop — 4 event handlers:
+  //
+  //   socket.onopen    → connection established
+  //   socket.onmessage → new data arrived
+  //   socket.onclose   → connection dropped
+  //   socket.onerror   → something went wrong
+
+  let socket;
+  let reconnectTimer;
+
+  function connect() {
+    log(`Connecting to ${WS_URL} …`, 'info');
+
+    // ① Create the WebSocket
+    socket = new WebSocket(WS_URL);
+
+    // ② Connection opened
+    socket.onopen = () => {
+      setConnected(true);
+      log('Connection open', 'info');
+      clearTimeout(reconnectTimer);
+    };
+
+    // ③ Message received
+    socket.onmessage = (event) => {
+      // event.data is always a string — parse it
+      const msg = JSON.parse(event.data);
+
+      // Ignore the welcome handshake packet
+      if (msg.type === 'welcome') {
+        log(`Server: ${msg.message}`, 'info');
+        return;
+      }
+
+      // Expect: { timestamp, telemetry: [{ id, value }, …] }
+      const { timestamp, telemetry } = msg;
+
+      // Log the raw packet (abbreviated)
+      const preview = JSON.stringify(msg).slice(0, 90);
+      log(preview);
+
+      // Update each sensor card — workshop only displays lc1
+      telemetry.filter(({ id }) => id === 'lc1').forEach(({ id, value }) => {
+        ensureCard(id);
+
+        const s = sensors[id];
+        s.values.push(value);
+        if (s.values.length > HISTORY) s.values.shift();
+
+        // Update numeric readout
+        const prev = parseFloat(s.valueEl.textContent) || 0;
+        const diff = Math.abs(value - prev);
+        s.valueEl.textContent = value.toFixed(2);
+        s.valueEl.className   = diff > 20 ? 'card-value spike' : 'card-value';
+
+        drawChart(id);
+      });
+    };
+
+    // ④ Connection closed
+    socket.onclose = () => {
+      setConnected(false);
+      log('Connection closed — retrying in 2 s …', 'warn');
+      reconnectTimer = setTimeout(connect, 2000);
+    };
+
+    // ⑤ Error
+    socket.onerror = (err) => {
+      log('WebSocket error (see console)', 'error');
+      console.error(err);
+    };
+  }
+
+  connect();
+
+  // Redraw charts on window resize
+  window.addEventListener('resize', () => {
+    Object.keys(sensors).forEach(drawChart);
+  });
+  </script>
+</body>
+</html>
